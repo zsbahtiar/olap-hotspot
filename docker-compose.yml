@@ -1,0 +1,88 @@
+version: "3"
+x-airflow-common: &airflow-common
+  build: infra/airflow/.
+  platform: linux/amd64
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW__DATABASE__SQL_ALCHEMY_CONN}
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__ENABLE_XCOM_PICKLING: "true"
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+    AIRFLOW__CORE__MIN_SERIALIZED_DAG_UPDATE_INTERVAL: 10
+    AIRFLOW__CORE__MIN_SERIALIZED_DAG_FETCH_INTERVAL: 10
+    AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: 5
+    AIRFLOW__SCHEDULER__PARSING_PROCESSES: 2
+    AIRFLOW__WEBSERVER__AUTHENTICATE: "true"
+    AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.session,airflow.api.auth.backend.basic_auth"
+    AIRFLOW_TMP_DIR: /opt/airflow/data/tmp
+    ADDITIONAL_PYTHON_DEPS: "python-dotenv"
+    PYTHONPATH: "/opt/airflow"
+    PLATFORM: "airflow-etl"
+  volumes:
+    - ./infra/airflow/dags:/opt/airflow/dags
+    - ./infra/airflow/logs:/opt/airflow/logs
+    - ./infra/airflow/plugins:/opt/airflow/plugins
+  depends_on:
+    postgres-airflow:
+      condition: service_healthy
+services:
+  postgres-airflow:
+    image: postgres:14
+    command: postgres -N ${AIRFLOW_DB_MAX_CONN}
+    ports:
+      - ${AIRFLOW_DB_PORT}:5432
+    environment:
+      POSTGRES_USER: ${AIRFLOW_DB_USER}
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
+      POSTGRES_DB: ${AIRFLOW_DB_NAME}
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${AIRFLOW_DB_USER}"]
+      interval: 5s
+      retries: 5
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - ${AIRFLOW_WEB_PORT}:8080
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+
+  airflow-init:
+    <<: *airflow-common
+    command: version
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_UPGRADE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_WEB_DEFAULT_USER}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_WEB_DEFAULT_PASSWORD}
+
+  hotspot_olap_db:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: ${HOTSPOT_OLAP_DB_USER}
+      POSTGRES_PASSWORD: ${HOTSPOT_OLAP_DB_PASSWORD}
+      POSTGRES_DB: ${HOTSPOT_OLAP_DB_NAME}
+    ports:
+      - "${HOTSPOT_OLAP_DB_PORT}:5432"
+
+  clickhouse:
+    image: yandex/clickhouse-server:latest
+    platform: linux/amd64
+    ports:
+      - "${CLICKHOUSE_PORT}:8123"
+
+volumes:
+  postgres-db-volume:
+  postgres-data:
+  clickhouse-data:
+  logs:
+  dags:
+  plugins:
